@@ -1,0 +1,74 @@
+#include <SoftwareSerial.h>
+#define relay1 4
+#define led1 5
+#define led2 7
+#define buzzer 10
+// Define Bluetooth Pins
+// Arduino Pin 2 connects to HC-05 TX
+// Arduino Pin 3 connects to HC-05 RX
+SoftwareSerial btSerial(2, 3);
+
+void setup() {
+
+  Serial.begin(9600); 
+  pinMode(relay1, OUTPUT);
+  pinMode(led1, OUTPUT);
+  pinMode(led2, OUTPUT);
+  pinMode(buzzer, OUTPUT);
+  Serial.println("Smart Home System Ready.");
+}
+
+void loop() {
+  // Check if data is coming in from the Bluetooth module (or USB)
+  if (btSerial.available()) {
+    // Read the incoming character
+    char command = btSerial.read();
+
+    // Execute action based on the received character
+    switch(command) {
+      // Device 1 Controls
+      case 'A': 
+        digitalWrite(relay1, LOW); // Turn Relay 1 ON
+        Serial.println("Device 1: ON");
+        break;
+      case 'a': 
+        digitalWrite(relay1, HIGH); // Turn Relay 1 OFF
+        Serial.println("Device 1: OFF");
+        break;
+
+      // Device 2 Controls
+      case 'B': 
+        digitalWrite(led1, HIGH); // Turn Relay 2 ON
+        Serial.println("Device 2: ON");
+        break;
+      case 'b': 
+        digitalWrite(led1, LOW); // Turn Relay 2 OFF
+        Serial.println("Device 2: OFF");
+        break;
+
+      // Device 3 Controls
+      case 'C': 
+        digitalWrite(led2, HIGH); // Turn Relay 3 ON
+        Serial.println("Device 3: ON");
+        break;
+      case 'c': 
+        digitalWrite(led2, LOW); // Turn Relay 3 OFF
+        Serial.println("Device 3: OFF");
+        break;
+
+      // Device 4 Controls
+      case 'D': 
+        digitalWrite(buzzer, HIGH); // Turn Relay 4 ON
+        Serial.println("Device 4: ON");
+        break;
+      case 'd': 
+        digitalWrite(buzzer, LOW); // Turn Relay 4 OFF
+        Serial.println("Device 4: OFF");
+        break;
+        
+      default:
+        Serial.println("Error: Unknown command.");
+        break;
+    }
+  }
+}
