@@ -1,0 +1,23 @@
+import time
+import board
+import adafruit_dht
+
+dht_device = adafruit_dht.DHT11(board.D18)
+
+print("Debugging DHT11 on GPIO 18... Looking for errors...")
+
+try:
+    while True:
+        try:
+            temperature_c = dht_device.temperature
+            humidity = dht_device.humidity
+            if temperature_c is not None:
+                print(f"SUCCESS! Temp: {temperature_c}�C, Humidity: {humidity}%")
+        except RuntimeError as error:
+            # PRINTING the error instead of passing silently
+            print(f"Sensor Error: {error.args[0]}")
+        
+        time.sleep(2.0)
+
+except KeyboardInterrupt:
+    dht_device.exit()
