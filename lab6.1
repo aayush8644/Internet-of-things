@@ -1,0 +1,37 @@
+import time
+from luma.core.interface.serial import i2c
+from luma.core.render import canvas
+from luma.oled.device import sh1106  # Explicit driver for your 1.3" display panel
+from PIL import ImageFont
+
+# 1. Initialize the hardware I2C interface bus line link
+serial_bus = i2c(port=1, address=0x3C)
+device = sh1106(serial_bus, width=128, height=64)
+
+# 2. Load the system-installed Symbola font engine
+try:
+    font = ImageFont.truetype("/usr/share/fonts/truetype/ancient-scripts/Symbola_hint.ttf", 16)
+except IOError:
+    print("Could not find the system Symbola font, falling back to default character engine.")
+    font = ImageFont.load_default()
+
+print("OLED Engine running smoothly... Press Ctrl+C to clear display.")
+
+try:
+    while True:
+        # Create a drawing canvas frame buffered in RAM
+        with canvas(device) as draw:
+            # Wipe the viewing layout clear
+            draw.rectangle(device.bounding_box, outline="black", fill="black")
+            
+            # Write text strings embedded with Unicode hex emojis
+            # \u263A = Smiley Face, \u2665 = Heart, \u2615 = Coffee Cup
+            draw.text((0, 0),  "Hello World! \u263A", font=font, fill="white")
+            draw.text((0, 22), "Robotics  \u2665", font=font, fill="white")
+            draw.text((0, 44), "Pi Engine \u2615", font=font, fill="white")
+            
+        time.sleep(5.0)
+
+except KeyboardInterrupt:
+    print("\nShutting down canvas stream...")
+    device.clear()
