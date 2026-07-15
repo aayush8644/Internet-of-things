@@ -1,0 +1,32 @@
+import time
+from gpiozero import AngularServo
+
+# Standard software-timed servo configuration
+servo = AngularServo(18, min_angle=0, max_angle=180, 
+                     min_pulse_width=0.001, max_pulse_width=0.002)
+
+print("Running servo on external power... Press Ctrl+C to stop.\n")
+
+try:
+    while True:
+        print("Moving to 0�")
+        servo.angle = 0
+        time.sleep(1.5)
+
+        print("Moving to 90�")
+        servo.angle = 90
+        time.sleep(1.5)
+
+        print("Moving to 180�")
+        servo.angle = 180
+        time.sleep(1.5)
+
+except KeyboardInterrupt:
+    print("\nDetaching servo signal channel.")
+    # setting value to None stops sending the pulse, turning off holding current
+    servo.value = None
+
+
+
+
+
