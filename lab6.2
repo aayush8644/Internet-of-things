@@ -1,0 +1,373 @@
+import os
+import sqlite3
+import datetime
+import time
+import board
+import adafruit_dht
+
+
+# Configuration Constants
+DB_NAME = "sensor_data.db"
+DHT_PIN = board.D18       # Standard BCM Pin 18 (Physical Pin 12)
+LOG_INTERVAL = 5.0        # Time delay between successful readings in seconds
+CHART_IMAGE_NAME = "sensor_trends.png"
+
+
+def setup_database():
+    """Initializes the SQLite database and creates the readings table if it doesn't exist."""
+    print(f"Initializing database: {DB_NAME}...")
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS readings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            temperature REAL,
+            humidity REAL
+        )
+    ''')
+    conn.commit()
+    conn.close()
+    print("Database table ready.")
+
+
+def insert_reading(temp, hum):
+    """Inserts a single sensor reading row into the database with a current timestamp."""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute(
+        "INSERT INTO readings (timestamp, temperature, humidity) VALUES (?, ?, ?)",
+        (timestamp, temp, hum)
+    )
+    conn.commit()
+    conn.close()
+
+
+def generate_visualization():
+    """
+    Queries the database for historical logs, compiles the trends,
+    and generates a dual-axis Matplotlib line plot saved as a PNG image.
+    """
+    print("\nExtracting database records for visualization...")
+   
+    # Check if database file exists and has records
+    if not os.path.exists(DB_NAME):
+        print("Error: No database file found to plot.")
+        return
+
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT timestamp, temperature, humidity FROM readings ORDER BY id ASC")
+    rows = cursor.fetchall()
+    conn.close()
+
+
+    if len(rows) < 2:
+        print("Warning: Insufficient data logged to generate a line trend. Collect at least 2 points!")
+        return
+
+
+    # Unpack columns into lists
+    timestamps = [datetime.datetime.strptime(r[0], "%Y-%m-%d %H:%M:%S") for r in rows]
+    temperatures = [r[1] for r in rows]
+    humidities = [r[2] for r in rows]
+
+
+    # Try importing matplotlib on-demand
+    try:
+        import matplotlib.pyplot as plt
+        import matplotlib.dates as mdates
+    except ImportError:
+        print("Error: 'matplotlib' is not installed in this environment.")
+        print("Please install it with: pip install matplotlib")
+        return
+
+
+    print("Generating dual-axis line chart...")
+    fig, ax1 = plt.subplots(figsize=(10, 5))
+
+
+    # Plot Temperature on Left Y-axis (Red)
+    color = 'tab:red'
+    ax1.set_xlabel('Timestamp (Time of Reading)')
+    ax1.set_ylabel('Temperature (�C)', color=color)
+    ax1.plot(timestamps, temperatures, color=color, linewidth=2, label='Temperature (�C)')
+    ax1.tick_params(axis='y', labelcolor=color)
+    ax1.grid(True, linestyle='--', alpha=0.5)
+
+
+    # Instantiate a second axes that shares the same x-axis for Humidity (Blue)
+    ax2 = ax1.twinx()  
+    color = 'tab:blue'
+    ax2.set_ylabel('Humidity (%)', color=color)
+    ax2.plot(timestamps, humidities, color=color, linewidth=2, linestyle='--', label='Humidity (%)')
+    ax2.tick_params(axis='y', labelcolor=color)
+
+
+    # Format the Time labels on X-axis cleanly
+    fig.autofmt_xdate()
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
+
+
+    plt.title('DHT11 Environment Sensor Trends Over Time')
+    fig.tight_layout()  # Adjust layout to prevent clipping
+
+
+    # Save to file (ideal for headless terminal operation)
+    plt.savefig(CHART_IMAGE_NAME, dpi=150)
+    plt.close()
+    print(f"Success! Historical chart saved as: {CHART_IMAGE_NAME}")
+
+
+def main():
+    # Setup database
+    setup_database()
+   
+    # Initialize the DHT11 sensor hardware
+    dht_device = adafruit_dht.DHT11(DHT_PIN)
+   
+    print(f"\nStarting logging session (Logging interval: {LOG_INTERVAL}s).")
+    print("Press Ctrl+C to stop logging and generate the visual trend graph.\n")
+   
+    try:
+        while True:
+            try:
+                temp = dht_device.temperature
+                hum = dht_device.humidity
+               
+                if temp is not None and hum is not None:
+                    insert_reading(temp, hum)
+                    timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+                    print(f"[{timestamp}] Logged to DB -> Temp: {temp:.1f}�C | Hum: {hum:.1f}%")
+                    time.sleep(LOG_INTERVAL)
+                   
+            except RuntimeError:
+                # The DHT11 is timing-sensitive; drop occasional bit glitches silently
+                time.sleep(0.5)
+                continue
+            except Exception as e:
+                dht_device.exit()
+                raise e
+
+
+    except KeyboardInterrupt:
+        print("\nLogging stopped by student.")
+    finally:
+        # Cleanup sensor hardware connection safely
+        dht_device.exit()
+       
+        # Ask if the student wants to generate the visualization chart
+        generate_visualization()
+        print("System shutdown clean. Goodbye!")
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+
+
+
+
+
+#!/usr/bin/env python3
+"""
+MQTT Central IoT Hub - Raspberry Pi Coordinator Script
+Updated to log environmental metrics to SQLite and host a command
+console capable of controlling multiple external microcontoller LEDs.
+"""
+
+
+import sys
+import os
+import time
+import sqlite3
+import datetime
+import threading
+import paho.mqtt.client as mqtt
+
+
+# If running locally on the Pi broker, keep as "localhost"
+BROKER_ADDRESS = "localhost"
+PORT = 1883
+DB_NAME = "mqtt_sensor_data.db"
+
+
+# Topics definition
+TOPIC_DHT = "home/sensors/dht11"
+TOPIC_LED1 = "home/actuators/led1"
+TOPIC_LED2 = "home/actuators/led2"
+
+
+# Safe fallback framework detection block for Paho-MQTT APIs
+try:
+    from paho.mqtt.client import CallbackAPIVersion
+    PAHO_V2 = True
+    print("[SYSTEM] Detected modern Paho-MQTT (v2.x Engine). Initializing VERSION2 callback context.")
+except ImportError:
+    PAHO_V2 = False
+    print("[SYSTEM] Detected legacy Paho-MQTT (v1.x Engine). Running older callback fallback framework.")
+
+
+#def setup_database():
+    """Initializes the database and creates the readings table if it doesn't exist."""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS mqtt_readings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            device_id TEXT NOT NULL,
+            temperature REAL,
+            humidity REAL
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+
+def log_sensor_payload(device_id, temp, hum):
+    """Parses and logs telemetry data received over the network into SQLite."""
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute(
+            "INSERT INTO mqtt_readings (timestamp, device_id, temperature, humidity) VALUES (?, ?, ?, ?)",
+            (timestamp, device_id, temp, hum)
+        )
+        conn.commit()
+        conn.close()
+        print(f" -> [Logged to DB] Device: {device_id} | Temp: {temp:.1f}�C | Hum: {hum:.1f}%")
+    except Exception as e:
+        print(f"[DATABASE ERROR] Could not save transaction record: {e}")
+
+
+#def on_connect_v2(client, userdata, flags, reason_code, properties):
+    """Paho-MQTT v2.x Callback signature containing reason code."""
+    if reason_code == 0:
+        print(f"\n[MQTT] Connected to Broker at '{BROKER_ADDRESS}' successfully!")
+        client.subscribe(TOPIC_DHT)
+        print(f"[MQTT] Subscribed to telemetry channel: {TOPIC_DHT}")
+    else:
+        print(f"[MQTT CONNECTION ERROR] Rejected. Code: {reason_code}")
+
+
+def on_connect_v1(client, userdata, flags, rc):
+    """Paho-MQTT v1.x legacy callback signature."""
+    if rc == 0:
+        print(f"\n[MQTT] Connected to Broker at '{BROKER_ADDRESS}' successfully!")
+        client.subscribe(TOPIC_DHT)
+        print(f"[MQTT] Subscribed to telemetry channel: {TOPIC_DHT}")
+    else:
+        print(f"[MQTT CONNECTION ERROR] Rejected. Code: {rc}")
+
+
+#def on_message(client, userdata, msg):
+    """Triggered automatically whenever an ESP node publishes DHT11 metrics."""
+    try:
+        payload_str = msg.payload.decode('utf-8')
+        parts = payload_str.split(',')
+        if len(parts) == 3:
+            dev_id = parts[0].strip()
+            temp = float(parts[1])
+            hum = float(parts[2])
+           
+            print(f"\n[RECEIVED] Topic: {msg.topic} | Payload: {payload_str}")
+            log_sensor_payload(dev_id, temp, hum)
+        else:
+            print(f"\n[WARN] Unexpected message format on {msg.topic}: {payload_str}")
+    except Exception as e:
+        print(f"\n[ERROR] Problem unpacking inbound message: {e}")
+
+
+#def interactive_console(client):
+    """Runs on a separate execution thread to handle user keyboard inputs safely."""
+    time.sleep(1.0) # Allow network connection status logs to settle
+    print("\n" + "="*50)
+    print("           MQTT SYSTEM CONTROL INTERFACE")
+    print("="*50)
+    print("Commands:")
+    print("  LED1 ON  - Turn ON external Red LED 1")
+    print("  LED1 OFF - Turn OFF external Red LED 1")
+    print("  LED2 ON  - Turn ON external Green LED 2")
+    print("  LED2 OFF - Turn OFF external Green LED 2")
+    print("  Q        - Exit program and stop MQTT client loop")
+    print("="*50 + "\n")
+
+
+    while True:
+        try:
+            user_input = input("CMD >> ").strip().upper()
+            if user_input == "Q":
+                print("[SYSTEM] Shutdown command received. Terminating loops...")
+                break
+            elif user_input == "LED1 ON":
+                client.publish(TOPIC_LED1, "ON", qos=1)
+                print(f"[MQTT PUBLISH] Sent command 'ON' to topic '{TOPIC_LED1}'")
+            elif user_input == "LED1 OFF":
+                client.publish(TOPIC_LED1, "OFF", qos=1)
+                print(f"[MQTT PUBLISH] Sent command 'OFF' to topic '{TOPIC_LED1}'")
+            elif user_input == "LED2 ON":
+                client.publish(TOPIC_LED2, "ON", qos=1)
+                print(f"[MQTT PUBLISH] Sent command 'ON' to topic '{TOPIC_LED2}'")
+            elif user_input == "LED2 OFF":
+                client.publish(TOPIC_LED2, "OFF", qos=1)
+                print(f"[MQTT PUBLISH] Sent command 'OFF' to topic '{TOPIC_LED2}'")
+            else:
+                print("[CMD] Invalid action! Use 'LED1 ON/OFF', 'LED2 ON/OFF', or 'Q'.")
+        except (KeyboardInterrupt, EOFError):
+            break
+
+
+def main():
+    setup_database()
+   
+    # Instantiate client depending on detected Paho API compatibility
+    if PAHO_V2:
+        client = mqtt.Client(callback_api_version=CallbackAPIVersion.VERSION2, client_id="pi_hub")
+        client.on_connect = on_connect_v2
+    else:
+        client = mqtt.Client(client_id="pi_hub")
+        client.on_connect = on_connect_v1
+       
+    client.on_message = on_message
+
+
+    print(f"[SYSTEM] Establishing bridge connection with Broker: {BROKER_ADDRESS}:{PORT}...")
+    try:
+        client.connect(BROKER_ADDRESS, PORT, 60)
+    except Exception as e:
+        print(f"\n[CRITICAL ERROR] Unable to bind to Mosquitto service: {e}")
+        print(" -> Verify Mosquitto is active on your Pi: 'sudo systemctl status mosquitto'")
+        sys.exit(1)
+
+
+    client.loop_start()
+
+
+    console_thread = threading.Thread(target=interactive_console, args=(client,), daemon=True)
+    console_thread.start()
+
+
+    try:
+        while console_thread.is_alive():
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        print("\n[SYSTEM] Interrupted by user.")
+    finally:
+        print("[SYSTEM] Cleaning connection paths. Closing background threads...")
+        client.loop_stop()
+        client.disconnect()
+        print("[SYSTEM] Offline cleanly. Goodbye!")
+
+
+if __name__ == "__main__":
+    main()
+
+
+
