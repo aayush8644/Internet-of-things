@@ -1,0 +1,38 @@
+import time
+from RPLCD.i2c import CharLCD
+
+# Initialize the 16x2 LCD display over the I2C bus
+# Address: 0x27 is standard. If your i2cdetect showed 3F, change this to 0x3f
+lcd = CharLCD(i2c_expander='PCF8574', address=0x27, port=1,
+              cols=16, rows=2, dotsize=8)
+
+print("Starting LCD Test Loop... Press Ctrl+C to stop.")
+
+try:
+    # 1. Clear the screen and print a static welcome message
+    lcd.clear()
+    lcd.write_string("System Status:")
+    
+    # 2. Move to the second row (Row indexing starts at 0, so Row 1 is the 2nd line)
+    lcd.cursor_pos = (1, 0) 
+    lcd.write_string("Initializing...")
+    time.sleep(2.0)
+
+    counter = 0
+    while True:
+        # Clear the second line only to prevent screen flickering
+        lcd.cursor_pos = (1, 0)
+        lcd.write_string("                ")  # Write 16 spaces to wipe the line
+        
+        # Reset position and print the changing data state
+        lcd.cursor_pos = (1, 0)
+        lcd.write_string(f"Uptime: {counter}s")
+        
+        counter += 1
+        time.sleep(1.0)
+
+except KeyboardInterrupt:
+    print("\nCleaning up LCD interface...")
+    lcd.clear()
+    # Turn off the screen backlight cleanly on exit
+    lcd.backlight_enabled = False
